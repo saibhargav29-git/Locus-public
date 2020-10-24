@@ -1,0 +1,148 @@
+properties([
+  pipelineTriggers([
+    [
+	githubPush()// Webhook
+      $class: 'GhprbPullRequestMerge',
+      triggers : [
+        [
+          $class: 'GhprbPullRequestTriggerFilter',
+          actionFilter: [
+            $class: 'GhprbPullRequestCreatedActionFilter',
+          ]
+        ],
+        [
+          $class: 'GhprbPullRequestTriggerFilter',
+          actionFilter: [
+            $class: 'GhprbPullRequestApprovedActionFilter',
+          ]
+        ],
+        [
+          $class: 'GhprbPullRequestTriggerFilter',
+          actionFilter: [
+            $class: 'GhprbPullRequestUpdatedActionFilter',
+          ]
+        ],
+        [
+          $class: 'GhprbPullRequestTriggerFilter',
+          actionFilter: [
+            $class: 'GhprbPullRequestMergedActionFilter',
+          ]
+        ],
+        [
+          $class: 'GhprbPRRepositoryTriggerFilter',
+          actionFilter: [
+            $class: 'GhprbPRRepositoryPushActionFilter',
+            triggerAlsoIfNothingChanged: true,
+            triggerAlsoIfTagPush: false,
+            allowedBranches: "",
+            isToApprove: true
+          ]
+        ]
+      ]
+    ]
+  ])
+])
+
+pipeline {  
+	agent any
+	
+	stages{
+		stage('Code Checkout'){
+			steps{
+				checkout([
+                 $class: 'GitSCM',
+                 branches: [[name: 'master']],
+				 refspec('+refs/pull/*:refs/remotes/origin/pr/*')  //Git checkout for PR request
+                 userRemoteConfigs: [[
+                    url: 'git@github.com:saibhargav29-git/Locus-public.git',
+                    credentialsId: 'gitci-cred',
+                 ]]
+                ])
+            
+			}
+		}
+		
+		stage('Build') {
+			steps{
+			
+           
+
+        script {
+						withMaven(jdk: 'JAVA_8', maven: 'Maven 3.3.9')
+                        echo 'Building...'
+						sh 'mvn archetype:generate -DgroupId=com.locus.build.maven.java \
+                           -DartifactId=com.locus.build.maven.java  \
+                           -DarchetypeArtifactId=maven-archetype-quickstart \
+                           -DinteractiveMode=false'
+					   sh "mvn -U -f ./demo-app/build-distribution/pom.xml clean compile install deploy"
+					}
+			}
+		}
+        
+		stage('SonarQube') {
+	        steps {
+	            script {
+				env.scannerHome = tool 'sonarscanner-3.0.3';
+                sh 'echo "Demo-app Sonar Scan Initiated.."'
+                    withSonarQubeEnv ('SonarQube') {
+                    sh '''$scannerHome/bin/sonar-scanner -X \
+                    -Dsonar.projectKey=locus.demo:demokey \
+					-Dsonar.projectName=LocusDemo \
+					-Dsonar.projectVersion=1.0.0.1-SNAPSHOT \
+					-Dsonar.sources=demo/src \
+					-Dsonar.java.binaries=demo/target \
+					-Dsonar.profile=locus \  \\ Quality profile having predefined java rules
+                    -Dsonar.jacoco.reportPath=locusdemo/target/test-results/coverage/jacoco/jacoco.exec'''
+					
+                    }
+	            }
+	        }
+        }
+		 stage('SonarQube Preview') {
+       
+         sh   'mvn "org.sonarsource.scanner.maven:sonar-maven-plugin:3.2:sonar" '
+       context="sonarqube/qualitygate"
+        setBuildStatus ("${context}", 'Checking Sonarqube quality gate', 'PENDING')
+        timeout(time: 1, unit: 'MINUTES') { // Just in case something goes wrong, pipeline will be killed after a timeout
+            def qg = waitForQualityGate() // Reuse taskId previously collected by withSonarQubeEnv
+            if (qg.status != 'OK') {
+                setBuildStatus ("${context}", "Sonarqube quality gate fail: ${qg.status}", 'FAILURE')
+                error "Pipeline aborted due to quality gate failure: ${qg.status}"
+            } else {
+                setBuildStatus ("${context}", "Sonarqube quality gate pass: ${qg.status}", 'SUCCESS')
+            }    
+        }
+    }
+		stage('S3 Upload') {
+
+        
+
+             steps {
+            withAWS(region:'<your-bucket-region>',credentials:'<AWS-Staging-Jenkins-Credential-ID>') {
+              s3Upload(bucket: '<bucket-name>', workingDir:'build', includePathPattern:'**/*');
+            }
+            mail(subject: 'Staging Build', body: 'Uploading Locus app into S3 bucket, to: 'jenkins-mailing-list@mail.com')
+          }
+            }
+
+        
+		
+		stage('Deploy TO ec2')
+		  {
+		  def Locus_Agent="Locus-ssh-agent"// ssh cred id to the ec2
+		  def APP_User="Locususer" //user to login
+		  def HOSTNAME=""
+           steps {
+	         env.HOSTNAME="ec2-publicip"
+	         sshagent(["${Locus_Agent}"]) {
+               
+             sh """ssh -o StrictHostKeyChecking=no APP_USER@'${HOSTNAME}  
+                  sleep(120) 
+                  withAWS(credentials:'awscredentials') 
+				  {
+                  s3Download(file: 'key', bucket: 'test', path: '/home/ubuntu/')
+		          sh '''cd /home/ubuntu; ./start_locusdemoapp.sh """
+                 }
+	           }
+	       }
+	     }
