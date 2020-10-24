@@ -1,0 +1,11 @@
+* Integarting Github webhook to jenkins 
+    -Go to your project repository.
+     -Go to "settings" in the right corner.
+     -Click on "webhooks."
+    -Click "Add webhooks."
+     -Add the Payload URL of jenkins
+	 Go to Manage Jenkins -> Configure System
+     Scroll down and you will find the GitHub Pull Requests checkbox. In the Published Jenkins URL, add the repository link
+     Click on "Save."
+	 Now go to the Jenkins pipeline and select "GitHub hook trigger for GITScm polling."
+	 Also add ssh keys generated in any of the ec2 to github ssh keys sections fro accessing git-ssh url
