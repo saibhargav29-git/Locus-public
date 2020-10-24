@@ -1,0 +1,7 @@
+INFRA:
+
+* CF to spinup two ec2 instances with necessary iam roles, instance profiles,securtiy group and vpc setup
+* Download the jenkins binary into one of the ec2 or use existing docker images to make jenkins server up adn running
+* Add the other ec2 as slave using jnlp agent or just establish ssh connectivity by adding its details in "Manage jenkins"
+* Download the maven, jdk, sonar binaries using jenkins job
+* Setup Basic quality gate and "JAVA" quality profile to scan the code in sonar dashboard
